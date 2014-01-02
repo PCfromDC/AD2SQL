@@ -1,10 +1,5 @@
-AD2SQL
-======
-
-PowerShell for synchronizing users from a Domain Controller to a SQL Table
-
 # Array of Domain Controller Server Names
-$OUs = @("DC01","DC02","DC03")
+$DCs = @("DC01","DC02","DC03")
 
 # Database Server
 $dbServer = "sql2012-03"
@@ -353,6 +348,40 @@ function writeFinishTime($string)
     $string + " duration: " + $queryDuration | Out-File $file -Append
 } #writeQueryFinishTime
 
+
+####################
+# Validate Servers #
+####################
+
+Function validateServer ($s)
+{
+    $alive = $true
+
+    if(!(Test-Connection -Cn $s -BufferSize 16 -Count 1 -ea 0 -quiet))
+
+    {    
+
+    "Problem connecting to $s" | Out-File $file -Append
+    ipconfig /flushdns | out-null
+    ipconfig /registerdns | out-null
+    nslookup $s | out-null
+    if(!(Test-Connection -Cn $s -BufferSize 16 -Count 1 -ea 0 -quiet))
+        {
+            $alive = $false
+        }
+
+    ELSE 
+        {
+            "Resolved problem connecting to $s" | Out-File $file -Append
+            $alive = $true
+        } #end if
+
+   } # end if
+
+   return $alive # always a good sign!
+
+} # Validate Server Alive
+
 #endregion
 <# 
 #  **************************
@@ -366,10 +395,22 @@ function writeFinishTime($string)
 #  *************************
 #> 
 
-
 # Create Out-File and add start time/date
 $PoSH_startTime = Get-Date
 "Synchronize AD to SQL PowerShell started: " + $PoSH_startTime | Out-File $file
+
+# Validate Domain Controllers
+$OUs = @() 
+foreach ($DC in $DCs)
+{
+    $a = validateServer($DC)
+    
+    if ($a)
+    {
+        "$DC is alive: " + $a | Out-File $file -Append
+        $OUs += $DC
+    }
+}
 
 $counter = 0
 foreach ($OU in $OUs)
@@ -390,17 +431,18 @@ foreach ($OU in $OUs)
 
     # Set AD Properties to return 
     if ($counter -lt 1)
-        {
-            $properties = ("sAMAccountName","displayName","mail","telephoneNumber","physicalDeliveryOfficeName","department","userAccountControl","company","title","lastLogon","manager","givenName","Surname")
-        }
+    {
+        $properties = ("sAMAccountName","displayName","mail","telephoneNumber","physicalDeliveryOfficeName","department","userAccountControl","company","title","lastLogon","manager","givenName","Surname")
+    }
     else
-        {
-            $properties = ("sAMAccountName","lastLogon")
-        }
+    {
+        $properties = ("sAMAccountName","lastLogon")
+    }
 
     # Get Users and their properties out of AD where the displayName is not blank
-    # $users = Get-ADUser -Filter * -Server $ouServer -Properties (foreach{$properties}) | Select (foreach{$properties})
-    $users = Get-ADUser -Filter {displayName -like "*"}  -Server $ouServer -Properties (foreach{$properties}) | Select (foreach{$properties})
+    $users = Get-ADUser -Filter * -Server $ouServer -Properties (foreach{$properties}) | Select (foreach{$properties})
+
+  # $users = Get-ADUser -Filter {displayName -like "*"}  -Server $ouServer -Properties (foreach{$properties}) | Select (foreach{$properties})
 
     # add AD query finish time/date to outfile
     $endTime = Get-Date
@@ -410,17 +452,16 @@ foreach ($OU in $OUs)
     $queryDuration = ($endTime - $startTime).duration()
     "Query AD " + $ouServer + " duration: " + $queryDuration | Out-File $file -Append
     
+    
     # Clean up lastLogon values
     foreach ($user in $users)
     {
         if (!$user.lastLogon)
             {
-                # If lastLogon is NULL then set value to zero
                 $user.lastLogon = 0
             }
         else
             {
-                # Otherwise change value to datetime
                 $user.lastLogon = [datetime]::FromFileTime($user.lastLogon).ToString('yyyy-MM-dd HH:mm:ss.fff') 
             }
     }
@@ -532,6 +573,7 @@ if ($OUs.Count -gt 1)
     {
         $max = $arrayLLT[$counter][1..$arrayLength] | Measure -Maximum
         $arrayLLT[$counter].lastLogon = $max.Maximum
+        # $arrayLLT[$counter].lastLogon = [datetime]::FromFileTime($max.Maximum).ToString('yyyy-MM-dd HH:mm:ss.fff') 
         $counter ++
     }
 
